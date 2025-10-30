@@ -1,57 +1,75 @@
 import streamlit as st
 from supabase import create_client
-import pandas as pd
 import os
+import pandas as pd
 
 st.set_page_config(page_title="CleanIntel • Smart Tender Assistant", page_icon="🧠", layout="centered")
 
 # --- Connect to Supabase ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
-if not SUPABASE_URL or not SUPABASE_KEY:
-    st.error("❌ Missing Supabase credentials. Please add SUPABASE_URL and SUPABASE_KEY.")
-    st.stop()
-
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-st.success("✅ Connected to Supabase successfully!")
 
-# --- Homepage mode ---
-st.title("🧠 CleanIntel")
-st.subheader("Smart Tender Assistant")
-st.markdown("Find **public cleaning tenders** faster and smarter — free for early users.")
+# --- Session state ---
+if "user" not in st.session_state:
+    st.session_state["user"] = None
+if "auth_mode" not in st.session_state:
+    st.session_state["auth_mode"] = "login"
 
-if "search_mode" not in st.session_state:
-    st.session_state["search_mode"] = False
+# --- AUTH UI ---
+def auth_screen():
+    st.title("🔑 CleanIntel Login / Signup")
 
-# Homepage sections
-if not st.session_state["search_mode"]:
-    st.markdown("### 🚀 Start searching instantly")
-    col1, col2 = st.columns([1,1])
+    with st.form("auth_form"):
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+        submit = st.form_submit_button("Continue")
+
+        if submit:
+            if st.session_state["auth_mode"] == "login":
+                user = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                if user.user:
+                    st.session_state["user"] = user.user
+                    st.success(f"Welcome back, {email}!")
+                    st.experimental_rerun()
+                else:
+                    st.error("Invalid credentials. Try again or sign up.")
+            else:
+                user = supabase.auth.sign_up({"email": email, "password": password})
+                if user.user:
+                    st.success("✅ Signup successful! Please verify your email, then log in.")
+                else:
+                    st.error("Error during signup. Try again.")
+
+    col1, col2 = st.columns(2)
     with col1:
-        if st.button("🔍 Try it Free", use_container_width=True):
-            st.session_state["search_mode"] = True
+        if st.button("Create an account"):
+            st.session_state["auth_mode"] = "signup"
             st.experimental_rerun()
     with col2:
-        st.link_button("💼 Login / Signup", "https://forms.gle/YOUR_FORM_LINK_HERE", use_container_width=True)
+        if st.button("Have an account? Login"):
+            st.session_state["auth_mode"] = "login"
+            st.experimental_rerun()
 
-    st.divider()
-    st.markdown("### 💸 Pricing Plans")
-    st.markdown("""
-    | Plan | Price | Features |
-    |------|-------|-----------|
-    | **Free** | £0 | 20 tender searches/month |
-    | **Pro** | £10/mo | 500 searches + filters |
-    | **Enterprise** | Custom | API access + support |
-    """)
+# --- LOGOUT ---
+def logout():
+    st.session_state["user"] = None
+    supabase.auth.sign_out()
+    st.success("Logged out!")
+    st.experimental_rerun()
 
-    st.divider()
-    st.caption("© 2025 CleanIntel. Built for smarter public tenders.")
+# --- MAIN APP ---
+if not st.session_state["user"]:
+    auth_screen()
     st.stop()
 
-# --- Tender Search Mode ---
-st.text_input("Describe what you're looking for", key="query", placeholder="e.g. cleaning tenders closing next month")
+st.sidebar.success(f"Logged in as {st.session_state['user'].email}")
+if st.sidebar.button("🚪 Logout"):
+    logout()
+
+st.title("🧠 CleanIntel • Smart Tender Assistant")
+st.write("Find **public cleaning tenders** faster and smarter.")
+
+query = st.text_input("Describe what you're looking for", placeholder="e.g. school cleaning tenders closing next month")
 if st.button("Search"):
-    query = st.session_state["query"]
-    st.write(f"Searching tenders for: **{query}** ...")
-    # (You can plug your existing tender-loading logic here)
+    st.write(f"Searching tenders for: **{query}** ... (sample results below)")

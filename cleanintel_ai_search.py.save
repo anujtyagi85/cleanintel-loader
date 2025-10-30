@@ -1,0 +1,155 @@
+import streamlit as st
+import pandas as pd
+from openai import OpenAI
+from supabase import create_client
+import os
+import json
+from datetime import datetime, timedelta
+
+# -------------------------
+# 🔧 Environment setup
+# -------------------------
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+client = OpenAI(api_key=OPENAI_API_KEY)
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# -------------------------
+# 🎨 Streamlit Layout
+# -------------------------
+st.set_page_config(page_title="CleanIntel • Smart Tender Assistant", page_icon="🧠", layout="wide")
+st.title("🧠 CleanIntel • Smart Tender Assistant")
+st.caption("Type how you think. Get tenders that matter.")
+
+example_prompt = "school cleaning tenders in UK under £2m closing next month"
+prompt = st.text_input("Describe what you're looking for", placeholder=f"e.g. {example_prompt}")
+
+col1, col2 = st.columns([1, 0.4])
+search_btn = col1.button("🔍 Search")
+example_btn = col2.button("✨ Try example")
+
+if example_btn:
+    prompt = example_prompt
+    st.experimental_rerun()
+
+st.divider()
+
+# -------------------------
+# 🧠 AI Parsing Function
+# -------------------------
+def parse_ai_query(user_prompt: str):
+    system_prompt = """
+    You are a data parser for a tender search engine.
+    Convert user text into structured JSON with these exact fields:
+    {
+        "keywords": [string],
+        "region": string or null,
+        "max_value_gbp": number or null,
+        "days_remaining": number or null
+    }
+
+    Rules:
+    - Always return valid JSON, nothing else.
+    - "keywords" must be a list.
+    - If the user says "closing soon" assume 15 days.
+    - If they say "next month" assume 30 days.
+    - If you don't know a field, set it to null.
+    """
+
+    response = client.responses.create(
+        model="gpt-4o-mini",
+        input=f"{system_prompt}\nUser query: {user_prompt}",
+        temperature=0,
+    )
+
+    try:
+        text_output = response.output[0].content[0].text.strip()
+        parsed = json.loads(text_output)
+    except Exception:
+        parsed = {"keywords": [], "region": None, "max_value_gbp": None, "days_remaining": None}
+
+    return parsed
+
+
+# -------------------------
+# 🗂️ Supabase Data Fetch
+# -------------------------
+def load_tenders(filters=None, limit=100):
+    query = supabase.table("tenders").select("*").limit(limit)
+
+    # ✅ Combine keyword filters dynamically
+    if filters and filters.get("keywords"):
+        keyword_conditions = []
+        for kw in filters["keywords"]:
+            keyword_conditions.append(f"title.ilike.%{kw}%")
+            keyword_conditions.append(f"description.ilike.%{kw}%")
+        combined_filter = ",".join(keyword_conditions)
+        query = query.or_(combined_filter)
+
+    # ✅ Region filtering
+    if filters and filters.get("region"):
+        query = query.ilike("country", f"%{filters['region']}%")
+
+    # ✅ Max value filtering
+    if filters and filters.get("max_value_gbp"):
+        query = query.lte("value_gbp", filters["max_value_gbp"])
+
+    # ✅ Days remaining (deadline logic)
+    if filters and filters.get("days_remaining"):
+        try:
+            days = int(filters["days_remaining"])
+            today = datetime.utcnow().date()
+            future_date = today + timedelta(days=days)
+            query = query.lte("deadline", future_date.isoformat())
+        except Exception as e:
+            print("Date filter error:", e)
+
+    data = query.execute()
+    df = pd.DataFrame(data.data)
+    return df
+
+
+# -------------------------
+# 🚀 Main Search Logic
+# -------------------------
+def add_days_remaining(df):
+    """Adds a calculated 'days_remaining' column if 'deadline' exists."""
+    if "deadline" in df.columns:
+        try:
+            deadline_series = pd.to_datetime(df["deadline"], errors="coerce", utc=True)
+            now = pd.Timestamp.utcnow()
+            df["days_remaining"] = (deadline_series - now).dt.days
+        except Exception as e:
+            print("Error calculating days remaining:", e)
+    return df
+
+
+if search_btn and prompt:
+    with st.spinner("Thinking... 🧠"):
+        ai_filters = parse_ai_query(prompt)
+        st.subheader("🪄 AI interpreted filters:")
+        st.json(ai_filters)
+
+        try:
+            df = load_tenders(ai_filters)
+            if df.empty:
+                st.warning("No tenders matched that query. Try simplifying your prompt.")
+            else:
+                df = add_days_remaining(df)
+                st.success(f"✅ Loaded {len(df)} matching tenders")
+                display_cols = [c for c in ["title", "description", "country", "value_gbp", "deadline", "days_remaining"] if c in df.columns]
+                st.dataframe(df[display_cols])
+        except Exception as e:
+            st.error(f"Error loading tenders: {e}")
+
+else:
+    try:
+        df = load_tenders(limit=100)
+        df = add_days_remaining(df)
+        st.success(f"✅ Loaded {len(df)} tenders")
+        display_cols = [c for c in ["title", "description", "country", "value_gbp", "deadline", "days_remaining"] if c in df.columns]
+        st.dataframe(df[display_cols].head(10))
+    except Exception as e:
+

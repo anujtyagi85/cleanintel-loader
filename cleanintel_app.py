@@ -4,11 +4,20 @@ import os
 import pandas as pd
 from datetime import date
 
-st.set_page_config(page_title="CleanIntel • Smart Tender Assistant", page_icon="🧠", layout="centered")
+st.set_page_config(
+    page_title="CleanIntel • Smart Tender Assistant",
+    page_icon="🧠",
+    layout="centered"
+)
 
 # --- Connect to Supabase ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    st.error("❌ Missing Supabase credentials. Please set SUPABASE_URL and SUPABASE_KEY.")
+    st.stop()
+
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- Session state ---
@@ -17,44 +26,51 @@ if "user" not in st.session_state:
 if "auth_mode" not in st.session_state:
     st.session_state["auth_mode"] = "login"
 
-# --- AUTH UI ---
+# --- AUTH SCREEN ---
 def auth_screen():
     st.title("🔑 CleanIntel Login / Signup")
+
     with st.form("auth_form"):
         email = st.text_input("Email")
         password = st.text_input("Password", type="password")
         submit = st.form_submit_button("Continue")
 
         if submit:
-            if st.session_state["auth_mode"] == "login":
-                user = supabase.auth.sign_in_with_password({"email": email, "password": password})
-                if user.user:
-                    st.session_state["user"] = user.user
-                    st.experimental_rerun()
+            try:
+                if st.session_state["auth_mode"] == "login":
+                    user = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                    if user.user:
+                        st.session_state["user"] = user.user
+                        st.rerun()
+                    else:
+                        st.error("Invalid credentials. Try again or sign up.")
                 else:
-                    st.error("Invalid credentials. Try again or sign up.")
-            else:
-                user = supabase.auth.sign_up({"email": email, "password": password})
-                if user.user:
-                    st.success("✅ Signup successful! Verify your email, then log in.")
-                else:
-                    st.error("Error during signup. Try again.")
+                    user = supabase.auth.sign_up({"email": email, "password": password})
+                    if user.user:
+                        st.success("✅ Signup successful! Please verify your email, then log in.")
+                    else:
+                        st.error("Signup failed. Try again.")
+            except Exception as e:
+                st.error(f"⚠️ {e}")
 
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Create an account"):
             st.session_state["auth_mode"] = "signup"
-            st.experimental_rerun()
+            st.rerun()
     with col2:
         if st.button("Have an account? Login"):
             st.session_state["auth_mode"] = "login"
-            st.experimental_rerun()
+            st.rerun()
 
-# --- LOGOUT ---
+# --- LOGOUT FUNCTION ---
 def logout():
     st.session_state["user"] = None
-    supabase.auth.sign_out()
-    st.experimental_rerun()
+    try:
+        supabase.auth.sign_out()
+    except Exception:
+        pass
+    st.rerun()
 
 # --- USAGE HANDLING ---
 def get_or_create_usage(user_id):
@@ -82,6 +98,7 @@ plan = usage["plan"]
 # Plan limits
 limit = 5 if plan == "free" else (500 if plan == "pro" else 999999)
 
+# --- SIDEBAR ---
 st.sidebar.success(f"Logged in as {st.session_state['user'].email}")
 st.sidebar.write(f"💳 Plan: **{plan.capitalize()}**")
 st.sidebar.write(f"📊 Searches used: {usage['searches_used']}/{limit}")
@@ -89,10 +106,14 @@ st.sidebar.write(f"📊 Searches used: {usage['searches_used']}/{limit}")
 if st.sidebar.button("🚪 Logout"):
     logout()
 
+# --- MAIN INTERFACE ---
 st.title("🧠 CleanIntel • Smart Tender Assistant")
 st.write("Find **public cleaning tenders** faster and smarter — free for your first 5 searches each month.")
 
-query = st.text_input("Describe what you're looking for", placeholder="e.g. school cleaning tenders closing next month")
+query = st.text_input(
+    "Describe what you're looking for",
+    placeholder="e.g. school cleaning tenders closing next month"
+)
 
 if st.button("Search"):
     if usage["searches_used"] >= limit:
@@ -103,4 +124,4 @@ if st.button("Search"):
     new_count = increment_usage(user_id)
     st.success(f"Search recorded ✅ ({new_count}/{limit})")
     st.write(f"Searching tenders for: **{query}** ...")
-    # Add your tender-fetching logic here
+    # Replace with your real tender-fetching logic

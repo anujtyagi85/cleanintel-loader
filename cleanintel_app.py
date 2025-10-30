@@ -10,7 +10,7 @@ st.set_page_config(
     layout="centered"
 )
 
-# --- Connect to Supabase ---
+# --- Supabase connection ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
@@ -20,48 +20,50 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# --- Session state ---
+# --- Session state init ---
 if "user" not in st.session_state:
     st.session_state["user"] = None
-if "auth_mode" not in st.session_state:
-    st.session_state["auth_mode"] = "login"
 
 # --- AUTH SCREEN ---
 def auth_screen():
     st.title("🔑 CleanIntel Login / Signup")
 
-    with st.form("auth_form"):
-        email = st.text_input("Email")
-        password = st.text_input("Password", type="password")
-        submit = st.form_submit_button("Continue")
+    tabs = st.tabs(["Login", "Create Account"])
 
-        if submit:
-            try:
-                if st.session_state["auth_mode"] == "login":
+    # LOGIN TAB
+    with tabs[0]:
+        with st.form("login_form"):
+            email = st.text_input("Email", key="login_email")
+            password = st.text_input("Password", type="password", key="login_password")
+            submit = st.form_submit_button("Login")
+
+            if submit:
+                try:
                     user = supabase.auth.sign_in_with_password({"email": email, "password": password})
                     if user.user:
                         st.session_state["user"] = user.user
                         st.rerun()
                     else:
-                        st.error("Invalid credentials. Try again or sign up.")
-                else:
+                        st.error("Invalid credentials. Try again.")
+                except Exception as e:
+                    st.error(f"⚠️ {e}")
+
+    # SIGNUP TAB
+    with tabs[1]:
+        with st.form("signup_form"):
+            email = st.text_input("Email", key="signup_email")
+            password = st.text_input("Password", type="password", key="signup_password")
+            submit = st.form_submit_button("Create Account")
+
+            if submit:
+                try:
                     user = supabase.auth.sign_up({"email": email, "password": password})
                     if user.user:
-                        st.success("✅ Signup successful! Please verify your email, then log in.")
+                        st.success("✅ Account created! Please verify your email before logging in.")
                     else:
                         st.error("Signup failed. Try again.")
-            except Exception as e:
-                st.error(f"⚠️ {e}")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Create an account"):
-            st.session_state["auth_mode"] = "signup"
-            st.rerun()
-    with col2:
-        if st.button("Have an account? Login"):
-            st.session_state["auth_mode"] = "login"
-            st.rerun()
+                except Exception as e:
+                    st.error(f"⚠️ {e}")
 
 # --- LOGOUT FUNCTION ---
 def logout():
@@ -95,7 +97,7 @@ user_id = st.session_state["user"].id
 usage = get_or_create_usage(user_id)
 plan = usage["plan"]
 
-# Plan limits
+# Limits by plan
 limit = 5 if plan == "free" else (500 if plan == "pro" else 999999)
 
 # --- SIDEBAR ---
@@ -124,4 +126,8 @@ if st.button("Search"):
     new_count = increment_usage(user_id)
     st.success(f"Search recorded ✅ ({new_count}/{limit})")
     st.write(f"Searching tenders for: **{query}** ...")
-    # Replace with your real tender-fetching logic
+    st.info("🔍 (Mock result placeholder — real tender data integration coming soon.)")
+
+# --- FOOTER ---
+st.markdown("---")
+st.caption("© 2025 CleanIntel. Built for smarter public tenders.")

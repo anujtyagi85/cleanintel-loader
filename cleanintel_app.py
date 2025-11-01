@@ -1,362 +1,332 @@
 # cleanintel_app.py
-# CleanIntel – Smart Tender Assistant (freemium, no OpenAI/Stripe)
-# Streamlit 1.50 compatible
-
 import os
 import datetime as dt
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple
 
 import streamlit as st
+
+# Supabase Py v2
 from supabase import create_client, Client
-from dotenv import load_dotenv
+from supabase.lib.client_options import ClientOptions
+from postgrest.exceptions import APIError
 
-# ---------- Config & Setup ----------
-
-st.set_page_config(page_title="CleanIntel • Smart Tender Assistant", page_icon="🧠", layout="wide")
-
-load_dotenv(override=True)
-
-def get_secret(key: str, default: Optional[str] = None) -> Optional[str]:
-    # Prefer env, fallback to .streamlit/secrets.toml
-    val = os.environ.get(key)
-    if val:
-        return val
-    try:
-        return st.secrets.get(key, default)  # type: ignore[attr-defined]
-    except Exception:
-        return default
-
-SUPABASE_URL = get_secret("SUPABASE_URL")
-SUPABASE_KEY = get_secret("SUPABASE_KEY")
-
-if not SUPABASE_URL or not SUPABASE_KEY:
-    st.error("Missing Supabase credentials. Please set SUPABASE_URL and SUPABASE_KEY in env or .streamlit/secrets.toml.")
-    st.stop()
-
-def get_supabase() -> Client:
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
-
-sb: Client = get_supabase()
-
-# --- Constants
-FREE_PLAN = "free"
-PRO_PLAN = "pro"
+APP_TITLE = "🧠 CleanIntel • Smart Tender Assistant"
 FREE_QUOTA = 5
-PRO_QUOTA = 500
+PRO_QUOTA = 50
 
-# --- Session helpers
-def get_state(key: str, default=None):
-    if key not in st.session_state:
-        st.session_state[key] = default
-    return st.session_state[key]
+# -----------------------------
+# Supabase bootstrap
+# -----------------------------
+@st.cache_resource(show_spinner=False)
+def get_supabase() -> Client:
+    url = os.getenv("SUPABASE_URL") or st.secrets.get("SUPABASE_URL")
+    key = os.getenv("SUPABASE_KEY") or st.secrets.get("SUPABASE_KEY")
+    if not url or not key:
+        st.error("Missing Supabase credentials. Please add SUPABASE_URL and SUPABASE_KEY.")
+        st.stop()
+    return create_client(url, key, options=ClientOptions(schema="public"))
 
-def set_state(key: str, value):
-    st.session_state[key] = value
+sb = get_supabase()
 
-# ---------- Auth Logic ----------
 
-def do_signup(email: str, password: str) -> Tuple[bool, str]:
-    try:
-        # Create auth user
-        res = sb.auth.sign_up({"email": email, "password": password})
-        # Prepare/ensure usage row for this user (may not have id yet if email not confirmed)
-        # Try to upsert by email; once user confirms, the UUID will be used next login.
-        ensure_user_usage_row(email=email, user_id=None)
-        return True, "Signup successful. Check your inbox to confirm your email."
-    except Exception as e:
-        return False, f"Signup failed: {e}"
+# -----------------------------
+# Helpers
+# -----------------------------
+def start_of_this_month() -> dt.date:
+    now = dt.date.today()
+    return dt.date(now.year, now.month, 1)
 
-def do_login(email: str, password: str) -> Tuple[bool, str]:
-    try:
-        res = sb.auth.sign_in_with_password({"email": email, "password": password})
-        user = res.user
-        if not user:
-            return False, "Login failed: no user returned."
-        set_state("user", {"id": user.id, "email": user.email})
-        # Make sure usage row exists/updated for this user id
-        ensure_user_usage_row(email=user.email, user_id=user.id)
-        return True, "Logged in."
-    except Exception as e:
-        return False, f"Login failed: {e}"
+def today() -> dt.date:
+    return dt.date.today()
 
-def do_logout():
-    try:
-        sb.auth.sign_out()
-    except Exception:
-        pass
-    if "user" in st.session_state:
-        del st.session_state["user"]
-    st.rerun()
+def normalize_email(email: str) -> str:
+    return (email or "").strip().lower()
 
-# ---------- user_usage enforcement ----------
 
-def month_start(d: dt.date) -> dt.date:
-    return dt.date(d.year, d.month, 1)
+# -----------------------------
+# Auth UI
+# -----------------------------
+def auth_screen():
+    tabs = st.tabs(["Login", "Create account"])
+    with tabs[0]:
+        login_form()
+    with tabs[1]:
+        signup_form()
 
-def ensure_user_usage_row(email: Optional[str], user_id: Optional[str]):
-    """
-    Ensures a row exists in public.user_usage for this user.
-    Columns expected:
-      id (uuid, PK, nullable), email (text), plan (text), searches_used (int),
-      monthly_quota (int), last_reset (date)
-    We upsert by email if id is unknown, then later update id when known.
-    """
-    today = dt.date.today()
 
-    # Fetch existing by user_id first
-    row = None
-    if user_id:
-        res = sb.table("user_usage").select("*").eq("id", user_id).limit(1).execute()
-        row = (res.data or [None])[0]
-    if not row and email:
-        res = sb.table("user_usage").select("*").eq("email", email).limit(1).execute()
-        row = (res.data or [None])[0]
+def login_form():
+    st.subheader("Login")
+    with st.form("login_form", clear_on_submit=False):
+        email = st.text_input("Email", key="login_email")
+        password = st.text_input("Password", type="password", key="login_password")
+        submitted = st.form_submit_button("Login")
 
-    # Prepare defaults
-    defaults = {
-        "email": email,
-        "plan": FREE_PLAN,
-        "searches_used": 0,
+    if submitted:
+        email_n = normalize_email(email)
+        try:
+            sb.auth.sign_in_with_password({"email": email_n, "password": password})
+            st.success("Logged in. Redirecting…")
+            st.session_state["logged_in_email"] = email_n
+            st.rerun()
+        except Exception as e:
+            st.error(f"Login failed: {str(e)}")
+
+
+def signup_form():
+    st.subheader("Create account")
+    with st.form("signup_form", clear_on_submit=False):
+        email = st.text_input("Email", key="signup_email")
+        password = st.text_input("Password", type="password", key="signup_password")
+        submitted = st.form_submit_button("Create account")
+
+    if submitted:
+        email_n = normalize_email(email)
+        try:
+            # Create auth user (Supabase will email a confirmation link)
+            sb.auth.sign_up({"email": email_n, "password": password})
+            st.success("Signup successful. Check your inbox to confirm your email.")
+
+            # Ensure a usage row exists (id uuid default, last_reset date, searches_used int, monthly_quota int, plan text, email text UNIQUE)
+            # We use UPSERT-like behavior: try insert; if unique violation, just ignore.
+            try:
+                sb.table("user_usage").insert({
+                    "email": email_n,
+                    "plan": "free",
+                    "monthly_quota": FREE_QUOTA,
+                    "searches_used": 0,
+                    "last_reset": today().isoformat(),
+                }).execute()
+            except APIError as api_err:
+                # If unique or null issues, ignore; otherwise bubble up
+                msg = str(api_err).lower()
+                if "duplicate key" in msg or "unique" in msg:
+                    pass
+                else:
+                    raise
+
+        except Exception as e:
+            st.error(f"Signup failed: {str(e)}")
+
+
+# -----------------------------
+# Usage / Quota handling
+# -----------------------------
+def fetch_or_create_usage(email: str) -> Optional[dict]:
+    """Get the user_usage row. If missing, create as free with defaults."""
+    email_n = normalize_email(email)
+    res = sb.table("user_usage").select("*").eq("email", email_n).execute()
+    rows = res.data or []
+    if rows:
+        return rows[0]
+
+    # Create a new usage row (free plan by default)
+    insert = {
+        "email": email_n,
+        "plan": "free",
         "monthly_quota": FREE_QUOTA,
-        "last_reset": str(month_start(today)),
+        "searches_used": 0,
+        "last_reset": today().isoformat(),
     }
+    sb.table("user_usage").insert(insert).execute()
+    return insert
 
-    if not row:
-        # Insert a new row – if user_id exists, set it as id
-        payload = defaults.copy()
-        if user_id:
-            payload["id"] = user_id
-        sb.table("user_usage").insert(payload).execute()
-        return
 
-    # If exists, make sure id/email present and reset month if needed
-    updates = {}
-    if user_id and not row.get("id"):
-        updates["id"] = user_id
-    if email and row.get("email") != email:
-        updates["email"] = email
+def resolve_quota(plan: str, explicit_quota: Optional[int]) -> int:
+    if explicit_quota and explicit_quota > 0:
+        return int(explicit_quota)
+    if (plan or "").lower() == "pro":
+        return PRO_QUOTA
+    return FREE_QUOTA
 
-    # Handle month reset
+
+def ensure_monthly_reset(usage: dict) -> dict:
+    """If last_reset < start_of_this_month, reset counters."""
+    last_reset_val = usage.get("last_reset")
+    needs_reset = False
     try:
-        last_reset = row.get("last_reset")
-        if isinstance(last_reset, str):
-            last_reset_date = dt.date.fromisoformat(last_reset)
-        elif last_reset:
-            # supabase may return date already parsed; be defensive
-            last_reset_date = dt.date.fromisoformat(str(last_reset))
+        if not last_reset_val:
+            needs_reset = True
         else:
-            last_reset_date = month_start(today)
+            # last_reset is date (YYYY-MM-DD) from Supabase
+            lr = dt.date.fromisoformat(str(last_reset_val)[0:10])
+            if lr < start_of_this_month():
+                needs_reset = True
     except Exception:
-        last_reset_date = month_start(today)
+        needs_reset = True
 
-    if month_start(today) != last_reset_date:
-        updates["searches_used"] = 0
-        updates["last_reset"] = str(month_start(today))
+    if needs_reset:
+        upd = {
+            "searches_used": 0,
+            "last_reset": today().isoformat()
+        }
+        sb.table("user_usage").update(upd).eq("email", usage["email"]).execute()
+        usage.update(upd)
+    return usage
 
-    # Ensure plan/quota sane
-    plan = row.get("plan") or FREE_PLAN
-    quota = row.get("monthly_quota") or (PRO_QUOTA if plan == PRO_PLAN else FREE_QUOTA)
-    if row.get("plan") != plan:
-        updates["plan"] = plan
-    if row.get("monthly_quota") != quota:
-        updates["monthly_quota"] = quota
-
-    if updates:
-        sb.table("user_usage").update(updates).eq("email", email).execute()
-
-def get_usage(email: str) -> Tuple[int, int, str]:
-    """
-    Returns (searches_used, monthly_quota, plan)
-    """
-    res = sb.table("user_usage").select("searches_used, monthly_quota, plan").eq("email", email).limit(1).execute()
-    row = (res.data or [None])[0]
-    if not row:
-        # create default if somehow missing
-        ensure_user_usage_row(email=email, user_id=None)
-        return (0, FREE_QUOTA, FREE_PLAN)
-    return (row.get("searches_used") or 0, row.get("monthly_quota") or FREE_QUOTA, row.get("plan") or FREE_PLAN)
 
 def increment_usage(email: str):
-    res = sb.table("user_usage").select("searches_used").eq("email", email).limit(1).execute()
-    row = (res.data or [None])[0]
-    current = (row or {}).get("searches_used") or 0
-    sb.table("user_usage").update({"searches_used": current + 1}).eq("email", email).execute()
+    sb.table("user_usage") \
+      .update({"searches_used": sb.rpc("increment", {"x": 1}) if hasattr(sb, "rpc") else None})  # fallback below if no rpc
+    # Simple safe update without rpc:
+    res = sb.table("user_usage").select("searches_used").eq("email", email).execute()
+    used = (res.data or [{}])[0].get("searches_used", 0)
+    sb.table("user_usage").update({"searches_used": used + 1}).eq("email", email).execute()
 
-# ---------- Query tenders ----------
 
-def search_tenders_simple(q: str, limit: int = 20) -> List[dict]:
+# -----------------------------
+# Search logic
+# -----------------------------
+def run_search(term: str, limit: int = 20) -> list:
     """
-    Keyword search across title/description/buyer (buyer treated as TEXT),
-    ordered by most recently published first.
+    Query your 'tenders' table by title (and fallback buyer::text).
+    Only uses columns you already have.
     """
-    q = q.strip()
-    if not q:
+    term_like = f"%{term}%"
+    # First try against title
+    try:
+        res = (
+            sb.table("tenders")
+              .select("title, buyer, published_date, value_text, notice_url")
+              .ilike("title", term_like)
+              .limit(limit)
+              .execute()
+        )
+        data = res.data or []
+        if data:
+            return data
+    except Exception:
+        pass
+
+    # Fallback: try buyer::text if supported by PostgREST filter -> cast jsonb to text by ->> ?
+    # Many PostgREST setups expose jsonb as text for ilike; if not, this just returns empty.
+    try:
+        res2 = (
+            sb.table("tenders")
+              .select("title, buyer, published_date, value_text, notice_url")
+              .ilike("buyer", term_like)
+              .limit(limit)
+              .execute()
+        )
+        return res2.data or []
+    except Exception:
         return []
 
-    pattern = f"%{q}%"
 
-    # We try to OR across the 3 columns. supabase-py uses .or_ for filters.
-    query = (
-        sb.table("tenders")
-          .select("title, description, buyer, value_normalized, currency, published_date, deadline, notice_url, tender_id")
-          .or_(f"title.ilike.{pattern},description.ilike.{pattern},buyer.ilike.{pattern}")
-          .order("published_date", desc=True, nulls_first=False)
-          .limit(limit)
-    )
-    res = query.execute()
-    return res.data or []
+def log_search(email: str):
+    """
+    Insert one row into search_logs.
+    Your table has (id uuid, email text, search_at timestamptz default now()).
+    """
+    try:
+        sb.table("search_logs").insert({"email": email}).execute()
+    except Exception:
+        # Non-blocking
+        pass
 
-# ---------- UI Sections ----------
 
-def header_bar():
-    st.markdown("### 🧠 CleanIntel • Smart Tender Assistant")
+# -----------------------------
+# Main app after auth
+# -----------------------------
+def app_home(email: str):
+    st.title(APP_TITLE)
 
-def hero_pricing():
-    st.write("Find **public cleaning tenders** faster and smarter — free for your first **5 searches each month**.")
-    left, right = st.columns([1, 3])
-    with left:
-        st.button("🔐 Login / Signup", on_click=lambda: set_state("show_auth", True))
-    st.markdown("### Pricing Plans")
-    st.table(
-        {
-            "Plan": ["Free", "Pro"],
-            "Price": ["£0", "£20/mo"],
-            "Features": ["5 searches/month", "500 searches + filters"],
-        }
-    )
+    # Usage box on the left
+    usage = fetch_or_create_usage(email)
+    usage = ensure_monthly_reset(usage)
 
-def auth_screen():
-    st.markdown("## 🔑 CleanIntel Login / Signup")
-    tabs = st.tabs(["Login", "Create account"])
-
-    with tabs[0]:
-        with st.form("login"):
-            email = st.text_input("Email", key="login_email")
-            pw = st.text_input("Password", type="password", key="login_pw")
-            submitted = st.form_submit_button("Continue")
-            if submitted:
-                ok, msg = do_login(email, pw)
-                if ok:
-                    st.success(msg)
-                    set_state("show_auth", False)
-                    st.rerun()
-                else:
-                    st.error(msg)
-
-    with tabs[1]:
-        with st.form("signup"):
-            email = st.text_input("Email", key="signup_email")
-            pw = st.text_input("Password", type="password", key="signup_pw")
-            submitted = st.form_submit_button("Create account")
-            if submitted:
-                ok, msg = do_signup(email, pw)
-                if ok:
-                    st.success(msg)
-                else:
-                    st.error(msg)
-
-def app_screen():
-    user = get_state("user")
-    if not user:
-        st.warning("You’re not logged in.")
-        return
-
-    email = user.get("email")
-    searches_used, monthly_quota, plan = get_usage(email)
+    plan = (usage.get("plan") or "free").lower()
+    monthly_quota = resolve_quota(plan, usage.get("monthly_quota"))
+    used = int(usage.get("searches_used") or 0)
 
     with st.sidebar:
-        st.caption(f"Logged in as\n**{email}**")
+        st.write(f"Logged in as\n**{email}**")
         st.write(f"**Plan:** {plan.capitalize()}")
-        st.write(f"**Searches used:** {searches_used}/{monthly_quota}")
-        if st.button("Logout"):
-            do_logout()
+        st.write(f"**Searches used:** {used}/{monthly_quota}")
+        if st.button("Logout", use_container_width=True):
+            try:
+                sb.auth.sign_out()
+            except Exception:
+                pass
+            st.session_state.pop("logged_in_email", None)
+            st.success("Logged out.")
+            st.rerun()
 
-    st.write("Describe what you're looking for")
-    q = st.text_input("e.g. nhs cleaning tenders in UK", key="query", label_visibility="collapsed")
-    c1, c2 = st.columns([1, 4])
-    with c1:
-        search = st.button("Search", type="primary")
+    st.caption("Find public **cleaning tenders** faster and smarter — free for your first 5 searches each month.")
 
-    if search:
-        # enforce quota
-        if searches_used >= monthly_quota:
-            st.error("You’ve reached your monthly search limit. Upgrade to Pro for 500 searches & filters (coming soon).")
+    term = st.text_input("Describe what you're looking for", placeholder="e.g. NHS cleaning tenders in UK")
+    if st.button("Search", type="primary", disabled=not term.strip()):
+        # Enforce quota
+        if used >= monthly_quota:
+            st.error("You’ve reached your monthly search limit for your plan. Upgrade to Pro to unlock more.")
             return
 
-        results = []
-        try:
-            results = search_tenders_simple(q, limit=30)
-        except Exception as e:
-            st.error(f"Search failed: {e}")
-            return
+        # Do the search
+        with st.spinner("Searching…"):
+            data = run_search(term.strip(), limit=20)
 
-        # Increment usage only on successful query
+        # Update usage + log
         increment_usage(email)
-        st.success(f"Search recorded ✅ ({searches_used + 1}/{monthly_quota})")
+        log_search(email)
 
-        if not results:
-            st.info("No tenders matched that query. Try different keywords.")
-            return
+        # Refresh usage for sidebar
+        usage = fetch_or_create_usage(email)
+        used = int(usage.get("searches_used") or 0)
+        st.experimental_set_query_params(_=dt.datetime.utcnow().timestamp())  # minor cache-bust for Cloud
 
         # Show results
-        st.markdown("### Results")
-        for row in results:
-            with st.container(border=True):
-                title = row.get("title") or "Untitled"
-                buyer = row.get("buyer") or "—"
-                val = row.get("value_normalized")
-                currency = row.get("currency") or ""
-                pub = row.get("published_date") or ""
-                deadline = row.get("deadline") or ""
-                url = row.get("notice_url") or ""
-                desc = row.get("description") or ""
+        st.success(f"Search recorded ✅ ({used}/{monthly_quota})")
+        if not data:
+            st.info("No tenders matched. Try a broader term.")
+        else:
+            for row in data:
+                title = row.get("title") or "(Untitled tender)"
+                buyer = row.get("buyer")
+                try:
+                    # buyer is jsonb; render as string safely
+                    buyer_txt = buyer if isinstance(buyer, str) else str(buyer)
+                except Exception:
+                    buyer_txt = ""
+                published = row.get("published_date")
+                val_txt = row.get("value_text")
+                notice_url = row.get("notice_url")
 
-                line1 = f"**{title}**"
-                if buyer and buyer != "—":
-                    line1 += f"  \n**Buyer:** {buyer}"
+                with st.container(border=True):
+                    st.markdown(f"**{title}**")
+                    if buyer_txt and buyer_txt != "EMPTY":
+                        st.write(buyer_txt)
+                    meta_bits = []
+                    if published:
+                        meta_bits.append(f"Published: {str(published)[:10]}")
+                    if val_txt and val_txt != "NULL":
+                        meta_bits.append(f"Value: {val_txt}")
+                    if meta_bits:
+                        st.caption(" • ".join(meta_bits))
+                    if notice_url and notice_url != "EMPTY":
+                        st.link_button("Open notice", notice_url, use_container_width=False)
 
-                st.markdown(line1)
 
-                meta = []
-                if val:
-                    try:
-                        # pretty value
-                        meta.append(f"**Value:** {currency}{int(float(val)):,}")
-                    except Exception:
-                        meta.append(f"**Value:** {currency}{val}")
-                if pub:
-                    meta.append(f"**Published:** {pub}")
-                if deadline:
-                    meta.append(f"**Deadline:** {deadline}")
-
-                if meta:
-                    st.caption(" • ".join(meta))
-
-                if desc:
-                    st.write(desc[:350] + ("…" if len(desc) > 350 else ""))
-
-                if url:
-                    st.link_button("View notice", url)
-
-# ---------- Main Router ----------
-
+# -----------------------------
+# Entry
+# -----------------------------
 def main():
-    header_bar()
+    st.set_page_config(page_title="CleanIntel", layout="wide")
+    if "logged_in_email" not in st.session_state:
+        # Try get current user from Supabase (useful after email confirm + redirect)
+        try:
+            user = sb.auth.get_user()
+            if user and getattr(user, "user", None) and getattr(user.user, "email", None):
+                st.session_state["logged_in_email"] = normalize_email(user.user.email)
+        except Exception:
+            pass
 
-    user = get_state("user")
-    show_auth = get_state("show_auth", False)
-
-    if not user and not show_auth:
-        # Home (logged-out)
-        hero_pricing()
-        return
-
-    if show_auth and not user:
+    email = st.session_state.get("logged_in_email")
+    if not email:
+        st.title(APP_TITLE)
         auth_screen()
         return
 
-    # Logged-in app
-    app_screen()
+    app_home(email)
+
 
 if __name__ == "__main__":
     main()

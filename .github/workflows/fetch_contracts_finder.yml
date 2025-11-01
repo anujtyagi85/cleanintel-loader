@@ -26,5 +26,5 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: |
-          python fetch_contracts_finder.py
+run: |
+  python scripts/fetch_contracts_finder.py

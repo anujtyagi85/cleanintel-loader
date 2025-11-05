@@ -12,12 +12,12 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ---------------- AUTH -----------------
-user = login_form()
-if not user:
+session = st.session_state.get("user")
+if not session:
     st.warning("Please login first.")
     st.stop()
 
-user_email = user.email
+user_email = session.email
 
 
 # ---------------- HEADER -----------------

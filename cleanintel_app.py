@@ -1,84 +1,74 @@
 import streamlit as st
+from supabase import create_client, Client
 import pandas as pd
 import os
-from supabase import create_client, Client
-import streamlit_authenticator as stauth
+from streamlit_authenticator import Authenticate
+
 
 st.set_page_config(page_title="CleanIntel • Smart Tender Assistant", layout="wide")
 
-# env
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# -------------------------------
-# AUTH
-# -------------------------------
-hashed_pw = stauth.Hasher(["cleanintel123"]).generate()
+### AUTH ###
 
 credentials = {
     "usernames": {
         "anuj.tyagi074@gmail.com": {
             "email": "anuj.tyagi074@gmail.com",
-            "name": "Anuj",
-            "password": hashed_pw[0]
+            "name": "Anuj Tyagi",
+            "password": "$2b$12$VyDmP7Z6wtogzbHaxkHE7ugjrvByB1e2RI/ThV7nZbKPqu.3SbZWW"
         }
     }
 }
-authenticator = stauth.Authenticate(
-    credentials, "cleanintel_cookie", "abcdef", cookie_expiry_days=2
+
+authenticator = Authenticate(
+    credentials,
+    "cleanintelapp",
+    "abcdef1234567890abcdef",
+    cookie_expiry_days=30
 )
 
 name, authentication_status, username = authenticator.login("Login", "main")
 
-if authentication_status != True:
+if authentication_status == False:
+    st.error("Incorrect email or password")
+
+if authentication_status is None:
     st.warning("Please login first.")
-    st.stop()
 
-authenticator.logout("Logout", "sidebar")
+if authentication_status:
 
-user_email = username
+    authenticator.logout("Logout", "sidebar")
 
-# -------------------------------
-# Header Content
-# -------------------------------
-st.markdown("## 🧠 CleanIntel • Smart Tender Assistant")
-st.write("Find public cleaning tenders faster and smarter — free for your first 5 searches each month.")
+    st.markdown("## 🧠 CleanIntel • Smart Tender Assistant")
+    st.write("Find public cleaning tenders faster and smarter — free for your first 5 searches each month.")
 
-# -------------------------------
-# Filters + Form
-# -------------------------------
-search_term = st.text_input("Describe what you're looking for", "")
+    search_term = st.text_input("Describe what you're looking for", "")
 
-st.sidebar.subheader("Filters")
+    st.sidebar.subheader("Filters")
 
-min_val = st.sidebar.number_input("Min Tender Value (GBP)", min_value=0, value=0)
-max_val = st.sidebar.number_input("Max Tender Value (GBP)", min_value=0, value=0)
+    min_val = st.sidebar.number_input("Min Tender Value (GBP)", min_value=0, value=0)
+    max_val = st.sidebar.number_input("Max Tender Value (GBP)", min_value=0, value=0)
 
-# if 0 → normalize to None
-if min_val == 0:
-    min_val = None
-if max_val == 0:
-    max_val = None
+    if st.button("Search") and search_term.strip() != "":
+        
+        if min_val == 0:
+            min_val = None
+        if max_val == 0:
+            max_val = None
 
-# -------------------------------
-# Search Button
-# -------------------------------
-if st.button("Search") and search_term.strip() != "":
-    
-    # log
-    supabase.rpc("record_search_activity", {"user_email": user_email}).execute()
-    
-    # MAIN RPC CALL
-    response = supabase.rpc(
-        "tender_keyword_search",
-        {"search_term": search_term, "min_val": min_val, "max_val": max_val}
-    ).execute()
+        rpc_payload = {
+            "search_term": search_term,
+            "min_value": min_val,
+            "max_value": max_val
+        }
 
-    if response.data is None or len(response.data) == 0:
-        st.info("No tenders matched. Try a broader term.")
-    else:
-        df = pd.DataFrame(response.data)
-        st.success(f"Search completed — {len(df)} results found")
-        st.dataframe(df)
+        result = supabase.rpc("tender_keyword_search", rpc_payload).execute()
+
+        if result.data:
+            df = pd.DataFrame(result.data)
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.info("No tenders found matching this search.")

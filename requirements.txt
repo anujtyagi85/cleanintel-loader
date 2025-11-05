@@ -6,3 +6,4 @@ plotly
 python-dotenv
 supabase
 streamlit-supabase-auth
+streamlit-auth-ui

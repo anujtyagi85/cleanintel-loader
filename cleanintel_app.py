@@ -20,8 +20,7 @@ credentials = {
         "anujtyagi074@gmail.com": {
             "email": "anujtyagi074@gmail.com",
             "name": "Anuj",
-            "password": stauth.Hasher(["cleanintel123"]).__call__()[0]
-        }
+"password": stauth.Hasher(["cleanintel123"]).generate()[0]        }
     }
 }
 

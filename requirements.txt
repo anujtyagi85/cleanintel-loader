@@ -1,8 +1,8 @@
 streamlit
+streamlit-authenticator==0.2.3
 pandas
 requests
 numpy
 plotly
 python-dotenv
 supabase
-streamlit-authenticator

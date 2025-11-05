@@ -17,7 +17,7 @@ if not user:
     st.warning("Please login first.")
     st.stop()
 
-user_email = user["email"]
+user_email = user.email
 
 
 # ---------------- HEADER -----------------

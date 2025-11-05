@@ -15,15 +15,17 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # -------------------------------
 # AUTH
 # -------------------------------
+hashed_pw = stauth.Hasher(["cleanintel123"]).generate()
+
 credentials = {
     "usernames": {
-        "anujtyagi074@gmail.com": {
-            "email": "anujtyagi074@gmail.com",
+        "anuj.tyagi074@gmail.com": {
+            "email": "anuj.tyagi074@gmail.com",
             "name": "Anuj",
-"password": stauth.Hasher(["cleanintel123"]).generate()[0]        }
+            "password": hashed_pw[0]
+        }
     }
 }
-
 authenticator = stauth.Authenticate(
     credentials, "cleanintel_cookie", "abcdef", cookie_expiry_days=2
 )

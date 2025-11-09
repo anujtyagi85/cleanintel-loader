@@ -13,18 +13,19 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.title("CleanIntel – UK Tender Intelligence")
 
-st.write("Fuzzy search in title, with fallback to buyer (JSON).")
+st.write("Fuzzy search in title, fallback to buyer (JSON stored).")
 
-keyword = st.text_input("Keyword (fuzzy match in title, fallback to buyer)")
+keyword = st.text_input("Keyword (e.g., cleaning, school, waste, solar)")
 
 if keyword:
     try:
-query = (
-    supabase.table("tenders")
-    .select("title, buyer, value_gbp, status, deadline")
-    .or_(f"title.ilike.%{keyword}%|buyer::text.ilike.%{keyword}%")
-    .limit(200)
-)
+        query = (
+            supabase.table("tenders")
+            .select("title, buyer, value_gbp, status, deadline")
+            .or_(f"title.ilike.%{keyword}%|buyer::text.ilike.%{keyword}%")
+            .limit(200)
+        )
+
         response = query.execute()
         rows = response.data
 
@@ -33,7 +34,8 @@ query = (
         else:
             df = pd.DataFrame(rows)
 
-            # TEMP BUYER NORMALISATION
+            # VERY BASIC NORMALISATION of buyer json
+            # we will refine later (extract nested, etc)
             df["buyer_name"] = df["buyer"].astype(str).str.replace('"', '', regex=False).str.strip()
 
             df = df[["title", "buyer_name", "value_gbp", "status", "deadline"]]

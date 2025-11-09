@@ -20,11 +20,10 @@ credentials = {
 
 authenticator = Authenticate(
     credentials,
-    cookie_name="cleanintel_cookie",
-    key="cleanintelkey123",     # NEW KEY
+    cookie_name="cleanintel_cookie_v2",   # <- new cookie name
+    key="cleanintelkey_new987",           # <- new random key
     cookie_expiry_days=30
 )
-
 name, authentication_status, username = authenticator.login("Login")
 
 if authentication_status is False:

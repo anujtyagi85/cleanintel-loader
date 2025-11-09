@@ -7,7 +7,7 @@ st.set_page_config(page_title="CleanIntel Data Viewer", layout="wide")
 st.title("CleanIntel Data Viewer")
 st.header("Search UK Government Tenders")
 
-# env
+# connect supabase
 url = os.getenv("SUPABASE_URL")
 key = os.getenv("SUPABASE_KEY")
 supabase = create_client(url, key)
@@ -19,7 +19,7 @@ if keyword:
         supabase.table("tenders")
         .select("value_normalized, sector, buyer, deadline, notice_url")
         .text_search("search_vector", keyword)
-        .range(0,50)
+        .limit(50)
         .execute()
     )
 
@@ -28,5 +28,5 @@ if keyword:
     if len(results) == 0:
         st.warning("No records found.")
     else:
-        st.success(f"Found {len(results)} records")
-        st.write(results)
+        st.success(f"Found {len(results)} tenders matching {keyword}")
+        st.dataframe(results)

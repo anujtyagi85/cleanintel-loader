@@ -8,13 +8,12 @@ st.set_page_config(page_title="CleanIntel – UK Tender Intelligence", layout="w
 st.title("CleanIntel – UK Tender Intelligence")
 st.caption("Fuzzy search in title or buyer + scoring (time + value + recency).")
 
-# ---- Supabase connection from Streamlit Secrets (ENV) ----
+# ---- Supabase connection (Streamlit Cloud -> Secrets) ----
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ========= Helpers =========
-
 SCORE_MAP = {"S": 100, "A": 75, "B": 50, "C": 30, "F": 0}
 TIER_BADGE = {"S": "🟩", "A": "🟢", "B": "🟡", "C": "🟠", "F": "🟥"}
 
@@ -24,9 +23,8 @@ def safe_float(v):
     except Exception:
         return None
 
-def safe_buyer_name(v):
+def safe_buyer_text(v):
     if isinstance(v, dict):
-        # pull common keys if buyer is JSON
         return v.get("name") or v.get("buyerName") or ""
     if isinstance(v, str):
         return v
@@ -40,17 +38,6 @@ def parse_first_present(df: pd.DataFrame, cols):
     return out
 
 def compute_score_tier(days_left: float | None, value_gbp: float | None, recency_days: float | None) -> str:
-    """
-    Time bands (base):
-      >21 days -> A (high-chance window)
-      7–21     -> B
-      2–6      -> C
-      <2 days  -> F
-    Value uplift (>= £250k):
-      A->S, B->A, C->B, F stays F
-    Recency penalty (published > 40 days ago):
-      S->A, A->B
-    """
     # time → base tier
     if days_left is None:
         base = "C"
@@ -63,8 +50,7 @@ def compute_score_tier(days_left: float | None, value_gbp: float | None, recency
             base = "C"
         else:
             base = "F"
-
-    # value uplift
+    # value uplift (>= £250k)
     hv = (safe_float(value_gbp) is not None and safe_float(value_gbp) >= 250000.0)
     if hv:
         if base == "A":
@@ -73,44 +59,67 @@ def compute_score_tier(days_left: float | None, value_gbp: float | None, recency
             base = "A"
         elif base == "C":
             base = "B"
-
-    # recency penalty
+    # recency penalty (> 40 days old)
     if recency_days is not None and recency_days > 40:
         if base == "S":
             base = "A"
         elif base == "A":
             base = "B"
-
     return base
 
-# ========= UI =========
+def buyer_contains(row_buyer, kw_lower: str) -> bool:
+    txt = safe_buyer_text(row_buyer).lower()
+    return kw_lower in txt if txt else False
 
+# ========= UI =========
 st.subheader("Search UK Government Tenders")
 keyword = st.text_input("Keyword (fuzzy match in title OR buyer, e.g., cleaning, school, waste, solar)")
 
 if keyword:
-    # We avoid .or_ SDK differences by doing two ilike queries and merging in pandas
+    kw = keyword.strip()
+    kw_lower = kw.lower()
     base_select = "title,buyer,value_gbp,status,deadline,published_date,date_published"
 
-    # title ilike
-    r1 = (
+    # --- 1) Server-side title ILIKE (safe for text columns)
+    r_title = (
         supabase.table("tenders")
         .select(base_select)
-        .ilike("title", f"%{keyword}%")
+        .ilike("title", f"%{kw}%")
         .execute()
     )
-    data1 = r1.data or []
+    data_title = r_title.data or []
 
-    # buyer ilike
-    r2 = (
-        supabase.table("tenders")
-        .select(base_select)
-        .ilike("buyer", f"%{keyword}%")
-        .execute()
-    )
-    data2 = r2.data or []
+    # --- 2) Try server-side buyer ILIKE (may fail if buyer is JSONB)
+    data_buyer = []
+    buyer_ilike_ok = True
+    try:
+        r_buyer = (
+            supabase.table("tenders")
+            .select(base_select)
+            .ilike("buyer", f"%{kw}%")
+            .execute()
+        )
+        data_buyer = r_buyer.data or []
+    except Exception:
+        buyer_ilike_ok = False
 
-    rows = (data1 or []) + (data2 or [])
+    # --- 3) If buyer ILIKE failed, pull recent and filter buyer in pandas
+    data_fallback = []
+    if not buyer_ilike_ok:
+        try:
+            r_recent = (
+                supabase.table("tenders")
+                .select(base_select)
+                .order("published_date", desc=True)  # safe even if nulls
+                .limit(1000)
+                .execute()
+            )
+            data_fallback = [row for row in (r_recent.data or []) if buyer_contains(row.get("buyer"), kw_lower)]
+        except Exception:
+            data_fallback = []
+
+    rows = (data_title or []) + (data_buyer or []) + (data_fallback or [])
+
     if not rows:
         st.warning("No tenders found.")
     else:
@@ -118,7 +127,7 @@ if keyword:
 
         # Normalize buyer to plain text
         if "buyer" in df.columns:
-            df["buyer"] = df["buyer"].apply(safe_buyer_name)
+            df["buyer"] = df["buyer"].apply(safe_buyer_text)
         else:
             df["buyer"] = ""
 
@@ -140,7 +149,7 @@ if keyword:
         else:
             df["published_dt"] = pd.to_datetime(pub_series, errors="coerce", utc=True)
 
-        # Calculate days_left and recency_days
+        # Derived metrics
         def days_left_fn(d):
             if pd.isna(d):
                 return None
@@ -154,21 +163,19 @@ if keyword:
         df["days_left"] = df["deadline"].apply(days_left_fn)
         df["recency_days"] = df["published_dt"].apply(recency_days_fn)
 
-        # Drop duplicates from merging title/buyer hits (by title + deadline combo)
+        # De-dup results from title & buyer matches
         if "title" in df.columns and "deadline" in df.columns:
             df = df.sort_values("value_gbp", ascending=False)
             df = df.drop_duplicates(subset=["title", "deadline"], keep="first")
 
-        # Compute score
+        # Scoring
         df["score_tier"] = df.apply(lambda r: compute_score_tier(r["days_left"], r["value_gbp"], r["recency_days"]), axis=1)
         df["score_value"] = df["score_tier"].map(SCORE_MAP).fillna(0).astype(int)
         df["score"] = df.apply(lambda r: f"{TIER_BADGE.get(r['score_tier'],'')} {r['score_tier']} ({int(r['score_value'])})", axis=1)
 
-        # Final order (your requested five + score columns at end)
+        # Final order + default sort (value desc)
         desired = ["title", "buyer", "value_gbp", "status", "deadline", "score", "score_tier", "score_value"]
         df = df.reindex(columns=[c for c in desired if c in df.columns])
-
-        # Default sort: money first (your choice B)
         if "value_gbp" in df.columns:
             df = df.sort_values(by=["value_gbp"], ascending=False)
 
@@ -178,21 +185,18 @@ if keyword:
         with st.expander("ⓘ Scoring Model (v1 heuristic)"):
             st.markdown(
                 """
-**How we score (v1):**  
-We prioritise tenders with **more than 21 days** left and **higher value (≥ £250k)**.
+**How we score (v1):**
 
-- **Time window (base tier):**  
-  • > 21 days → A (high-chance)  
-  • 7–21 days → B  
-  • 2–6 days → C  
-  • < 2 days → F  
+- **Time window (base tier)**  
+  >21d → A, 7–21d → B, 2–6d → C, <2d → F
 
-- **Value uplift (≥ £250k):**  
-  • A → **S**, B → **A**, C → **B** (F stays F)
+- **Value uplift (≥ £250k)**  
+  A→S, B→A, C→B (F stays F)
 
-- **Recency penalty:**  
-  • If published > 40 days ago: **S → A**, **A → B**
+- **Recency penalty**  
+  If published >40d ago: S→A, A→B
 
-- **Score values:** S=100, A=75, B=50, C=30, F=0
+- **Numeric score**  
+  S=100, A=75, B=50, C=30, F=0
                 """
             )

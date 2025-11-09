@@ -19,13 +19,12 @@ keyword = st.text_input("Keyword (fuzzy match in title, fallback to buyer)")
 
 if keyword:
     try:
-        query = (
-            supabase.table("tenders")
-            .select("title, buyer, value_gbp, status, deadline")
-            .or_(f"title.ilike.%{keyword}%,buyer::text.ilike.%{keyword}%")   # <-- FIX HERE
-            .limit(200)
-        )
-
+query = (
+    supabase.table("tenders")
+    .select("title, buyer, value_gbp, status, deadline")
+    .or_(f"title.ilike.%{keyword}%|buyer::text.ilike.%{keyword}%")
+    .limit(200)
+)
         response = query.execute()
         rows = response.data
 

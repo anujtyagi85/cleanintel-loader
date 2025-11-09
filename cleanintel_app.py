@@ -5,9 +5,8 @@ from streamlit_authenticator import Authenticate
 
 st.set_page_config(page_title="CleanIntel Loader", layout="wide")
 
-# ----------------------- AUTH -----------------------
-
-hashed_password = "$2b$12$VyDmP7Z6wtogzbHaxkHE7ugjrvByB1e2RI/ThV7nZbKPqu.3SbZWW"   # cleanintel123
+# =========== AUTH ===========
+hashed_password = "$2b$12$9YubmPf26wtogzbhaxHKE7ugjxr8yByle2Rl/ThVn7h2bKPqu.3Sb2W"   # cleanintel123
 
 credentials = {
     "usernames": {
@@ -21,47 +20,39 @@ credentials = {
 authenticator = Authenticate(
     credentials,
     cookie_name="cleanintel_cookie",
-    key="abcdce",
+    key="abcdeF",
     cookie_expiry_days=30
 )
 
 name, authentication_status, username = authenticator.login("Login")
 
-if authentication_status == False:
+if authentication_status is False:
     st.error("Incorrect username or password")
 
 if authentication_status is None:
     st.warning("Please enter your username and password")
 
-# ----------------------- APP ------------------------
-
+# =========== APP ============
 if authentication_status:
-
     authenticator.logout("Logout")
     st.title("CleanIntel Data Loader")
-
     st.success(f"Logged in as: {username}")
 
-    SUPABASE_URL = os.getenv("SUPABASE_URL")
-    SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    # connect supabase
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_KEY")
+    supabase = create_client(url, key)
 
     st.header("Search UK Government Tenders")
-
     keyword = st.text_input("Search keyword (example: cleaning, solar, medical, school, waste)")
 
     if keyword:
-response = supabase.table("tenders").select(
-    "notice_id,status,buyer,value_normalized,deadline,notice_url"
-).text_search(
-    column="search_vector",
-    query=keyword
+        response = supabase.table("tenders").select(
+            "notice_id,status,buyer,value_normalized,deadline,notice_url"
+        ).text_search(
+            column="search_vector",
+            query=keyword
+        ).limit(50).execute()
 
         results = response.data or []
-        
-        if len(results) == 0:
-            st.warning("No tenders found for this keyword.")
-        else:
-            st.write(f"Found {len(results)} tenders:")
-            st.dataframe(results, use_container_width=True)
+        st.write(results)

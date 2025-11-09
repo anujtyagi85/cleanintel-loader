@@ -69,7 +69,8 @@ if keyword:
 
         # buyer is json -> extract name safely
         if "buyer" in df.columns:
-            df["buyer_name"] = df["buyer"].apply(lambda v: v.get("name") if isinstance(v, dict) else None)
+df["buyer_name"] = df["buyer"].apply(extract_buyer_name)
+df["buyer_name"] = df["buyer_name"].fillna("Unknown / Not supplied")
             df = df.drop(columns=["buyer"])
             df = df.rename(columns={"buyer_name": "buyer"})
 

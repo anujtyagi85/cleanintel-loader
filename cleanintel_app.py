@@ -52,11 +52,11 @@ if authentication_status:
     keyword = st.text_input("Search keyword (example: cleaning, solar, medical, school, waste)")
 
     if keyword:
-        response = supabase.table("tenders") \
-            .select("notice_id,status,buyer,value_normalized,deadline,notice_url") \
-            .text_search("search_vector", keyword) \
-            .limit(50) \
-            .execute()
+response = supabase.table("tenders").select(
+    "notice_id,status,buyer,value_normalized,deadline,notice_url"
+).text_search(
+    column="search_vector",
+    query=keyword
 
         results = response.data or []
         

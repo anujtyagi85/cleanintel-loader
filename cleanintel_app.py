@@ -105,11 +105,11 @@ def safe_buyer_to_name(val):
 if keyword:
     # Ask for multiple possible publish-date columns; we’ll pick whichever exists.
     # Also include notice_url if present (not displayed yet, but useful later).
-    query = (
-        supabase.table("tenders")
-        .select("title,buyer,value_gbp,status,deadline,notice_url,published_date,date_published")
-        .text_search("search_vector", keyword)
-    )
+query = (
+    supabase.table("tenders")
+    .select("title,buyer,value_gbp,status,deadline,notice_url,published_date,date_published")
+    .ilike("title", f"%{keyword}%")
+)
     response = query.execute()
     rows = response.data or []
 

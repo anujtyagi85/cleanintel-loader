@@ -5,8 +5,9 @@ from streamlit_authenticator import Authenticate
 
 st.set_page_config(page_title="CleanIntel Loader", layout="wide")
 
-# =========== AUTH ===========
-hashed_password = "$2b$12$9YubmPf26wtogzbhaxHKE7ugjxr8yByle2Rl/ThVn7h2bKPqu.3Sb2W"   # cleanintel123
+# ================= AUTH =================
+
+hashed_password = "$2b$12$9Yubm2F6wtogzbahxKK7ugjxBYyBle2Rl/7hVn7h2bKPqu.3SbZWf"   # cleanintel123
 
 credentials = {
     "usernames": {
@@ -20,7 +21,7 @@ credentials = {
 authenticator = Authenticate(
     credentials,
     cookie_name="cleanintel_cookie",
-    key="abcdeF",
+    key="cleanintelkey123",     # NEW KEY
     cookie_expiry_days=30
 )
 
@@ -32,7 +33,8 @@ if authentication_status is False:
 if authentication_status is None:
     st.warning("Please enter your username and password")
 
-# =========== APP ============
+# ================= APP ===================
+
 if authentication_status:
     authenticator.logout("Logout")
     st.title("CleanIntel Data Loader")

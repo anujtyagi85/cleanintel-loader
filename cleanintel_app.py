@@ -1,57 +1,68 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client
+from datetime import datetime, timezone
+
 import os
-import json
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.set_page_config(page_title="CleanIntel – UK Tender Intelligence", layout="wide")
 
 st.title("CleanIntel – UK Tender Intelligence")
-st.write("Fuzzy search in title, with fallback to buyer name (JSON).")
-
-# env secrets come from Streamlit Cloud secrets
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+st.caption("Fuzzy search in title, with fallback to buyer name (JSON).")
 
 keyword = st.text_input("Keyword (fuzzy match in title, fallback to buyer)", placeholder="e.g., cleaning, school, waste, solar")
 
+# --- buyer normalisation ---
+def extract_buyer_name(obj):
+    if isinstance(obj, dict):
+        if "name" in obj and obj["name"]:
+            return obj["name"]
+        if "contactPoint" in obj and isinstance(obj["contactPoint"], dict):
+            return obj["contactPoint"].get("name")
+        if "organization" in obj and isinstance(obj["organization"], dict):
+            return obj["organization"].get("name")
+    return None
+
+
 if keyword:
-    # fuzzy title OR buyer json fallback
+
+    # Try title first
     query = (
         supabase.table("tenders")
-        .select("*")
+        .select("title,buyer,value_gbp,status,deadline")
         .ilike("title", f"%{keyword}%")
+        .limit(200)
     )
 
-    try:
-        response = query.execute()
-    except Exception as e:
-        st.error("Query failed. Check logs (Manage app) for details.")
-        st.stop()
+    response = query.execute()
+    rows = response.data
 
-    df = pd.DataFrame(response.data)
+    # if no rows → fallback to buyer object json search
+    if not rows or len(rows) == 0:
+        query2 = (
+            supabase.table("tenders")
+            .select("title,buyer,value_gbp,status,deadline")
+            .ilike("buyer::text", f"%{keyword}%")
+            .limit(200)
+        )
+        response = query2.execute()
+        rows = response.data
 
-    if df.empty:
-        st.warning("No tenders found.")
-        st.stop()
+    if rows and len(rows) > 0:
+        df = pd.DataFrame(rows)
 
-    # buyer json normalisation helper
-    def extract_buyer_name(obj):
-        if isinstance(obj, dict):
-            return obj.get("name")
-        return None
-
-    # new column
-    if "buyer" in df.columns:
+        # apply buyer normalization
         df["buyer_name"] = df["buyer"].apply(extract_buyer_name)
 
-    # reorder columns (only show what user wants)
-    desired_order = ["title", "buyer_name", "value_gbp", "status", "deadline"]
-    df = df[desired_order]
+        # reorder columns
+        df = df[["title","buyer_name","value_gbp","status","deadline"]]
 
-    st.success(f"Found {len(df)} tenders")
-    st.dataframe(df, use_container_width=True)
-else:
-    st.info("Enter a keyword to search tenders.")
+        st.success(f"Found {len(df)} tenders")
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.warning("No tenders found.")

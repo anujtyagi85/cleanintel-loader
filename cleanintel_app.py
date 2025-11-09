@@ -36,7 +36,7 @@ if keyword:
         df = pd.DataFrame(results)
 
         # reorder columns
-        desired_order = ["buyer ->> name", "value_normalized", "sector", "deadline", "notice_url"]
+        desired_order = ["buyer_ name", "value_normalized", "sector", "deadline", "notice_url"]
         df = df[desired_order]
 
         # rename nicer

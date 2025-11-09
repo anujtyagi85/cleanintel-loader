@@ -22,7 +22,7 @@ if keyword:
         query = (
             supabase.table("tenders")
             .select("title, buyer, value_gbp, status, deadline")
-            .or_(f"title.ilike.%{keyword}%,buyer.ilike.%{keyword}%")
+            .or_(f"title.ilike.%{keyword}%,buyer::text.ilike.%{keyword}%")   # <-- FIX HERE
             .limit(200)
         )
 
@@ -34,8 +34,7 @@ if keyword:
         else:
             df = pd.DataFrame(rows)
 
-            # BUYER NORMALISATION (this is the fix)
-            # buyer column is JSON but holds a simple string inside jsonb
+            # TEMP BUYER NORMALISATION
             df["buyer_name"] = df["buyer"].astype(str).str.replace('"', '', regex=False).str.strip()
 
             df = df[["title", "buyer_name", "value_gbp", "status", "deadline"]]

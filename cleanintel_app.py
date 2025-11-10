@@ -21,7 +21,7 @@ if keyword:
         query = (
             supabase.table("tenders")
             .select("title, buyer, value_gbp, status, deadline")
-            .or_(f"title.ilike.%{keyword}%,(buyer::text).ilike.%{keyword}%")
+            .or_(f"title.ilike.%{keyword}%,buyer::text.ilike.%{keyword}%")
             .limit(200)
         )
 
@@ -33,7 +33,7 @@ if keyword:
         else:
             df = pd.DataFrame(rows)
 
-            # buyer JSON → to readable string
+            # buyer JSON → readable string
             df["buyer_name"] = df["buyer"].astype(str).str.replace('"', '', regex=False).str.strip()
 
             df = df[["title", "buyer_name", "value_gbp", "status", "deadline"]]

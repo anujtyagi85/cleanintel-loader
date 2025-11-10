@@ -2,7 +2,6 @@ import streamlit as st
 from supabase import create_client
 import os
 import pandas as pd
-from datetime import datetime
 
 st.set_page_config(page_title="CleanIntel – UK Tender Intelligence", page_icon="🧽", layout="wide")
 
@@ -22,7 +21,7 @@ if keyword:
         query = (
             supabase.table("tenders")
             .select("title, buyer, value_gbp, status, deadline")
-            .or_(f"title.ilike.%{keyword}%|buyer::text.ilike.%{keyword}%")
+            .or_(f"title.ilike.%{keyword}%,buyer::text.ilike.%{keyword}%")
             .limit(200)
         )
 
@@ -34,8 +33,7 @@ if keyword:
         else:
             df = pd.DataFrame(rows)
 
-            # VERY BASIC NORMALISATION of buyer json
-            # we will refine later (extract nested, etc)
+            # convert jsonb to normal column value
             df["buyer_name"] = df["buyer"].astype(str).str.replace('"', '', regex=False).str.strip()
 
             df = df[["title", "buyer_name", "value_gbp", "status", "deadline"]]

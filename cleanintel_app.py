@@ -73,7 +73,7 @@ if keyword:
         query = (
             supabase.table("tenders")
             .select("title, buyer, value_gbp, status, deadline")
-            .or_(f"title.ilike.%{keyword}%,buyer::text.ilike.%{keyword}%")
+.or_(f"(title.ilike.%{keyword}%),(buyer::text.ilike.%{keyword}%)")
             .limit(200)
         )
         response = query.execute()
